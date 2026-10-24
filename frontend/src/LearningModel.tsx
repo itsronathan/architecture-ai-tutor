@@ -1,0 +1,1780 @@
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { useLocation } from "react-router-dom";
+import "./Chat.css";
+import { apiUrl } from "./apiBase";
+import { useCurriculum } from "./context/CurriculumContext";
+import {
+  fetchTextbookTreeForId,
+  focsOutlineToCurriculum,
+  readSelectedTextbookId,
+  reconcileSelectedTextbookWithCatalog,
+} from "./learningTextbooks";
+import MarkdownMessage from "./MarkdownMessage";
+import { getOrCreateStudentId } from "./utils/studentId";
+import { useAuth } from "./context/AuthContext";
+import { useSessionBridge } from "./context/SessionBridge";
+import { type OutlineSectionPreviewDetail } from "./LearningBarPanel";
+import {
+  SectionNoteButton,
+  SectionNotePanel,
+  useSectionNoteToggle,
+  type SectionNoteActions,
+} from "./TextbookSectionNote";
+import { useVerticalSplitPct } from "./hooks/useVerticalSplitPct";
+import { useDragScroll } from "./hooks/useDragScroll";
+import { FOCS_SECTION_NOTES } from "./data/focsSectionNotes";
+import { PracticePanel } from "./practice/PracticePanel";
+import { isProblemsSection, chapterOfProblems } from "./practice/isProblemsSection";
+import { getPracticeSet } from "./data/focsPracticeSets";
+import { GuidePanel } from "./guide/GuidePanel";
+import { isInductionGuideSection } from "./guide/chapterOfSection";
+import { INDUCTION_GUIDE } from "./guide/inductionGuide";
+import { getSectionNoteWithNewVocab, sectionTokenFromTitle, type BookAnchor } from "./utils/sectionNotes";
+import { FOCS_SECTION_TOKENS_PREORDER } from "./utils/focsSectionOrder";
+import { useLocale } from "./i18n/LocaleContext";
+import { LEARNING_CHAT_EXAMPLES } from "./learningChatExamples";
+import {
+  ONBOARDING_STEP_EVENT,
+  emitOnboardingNoteReady,
+  emitOnboardingProblemsReady,
+  emitOnboardingExpandPaths,
+  ONBOARDING_FINISHED_EVENT,
+} from "./onboarding/onboardingStorage";
+import {
+  ONBOARDING_NOTE_SECTION,
+  ONBOARDING_PROBLEMS_SECTION,
+  ONBOARDING_INDUCTION_EXPAND_PATHS,
+} from "./onboarding/onboardingDemoSection";
+import { WELCOME_MSG_SENTINEL } from "./i18n/messages";
+
+/** Left textbook panel width as % of layout (matches state rightPanelWidth). */
+const TEXTBOOK_PANEL_MIN_PCT = 15;
+const TEXTBOOK_PANEL_MAX_PCT = 90;
+const DEFAULT_TEXTBOOK_SPLIT_PCT = 67;
+/** Drag split past this → chat collapses to the right edge. */
+const CHAT_COLLAPSE_THRESHOLD_PCT = 88;
+
+const CHAT_PANEL_WIDTH_KEY = "ai_tutor_learning_textbook_split_pct";
+const TEXTBOOK_ZOOM_STORAGE_KEY = "ai_tutor_textbook_zoom_pct";
+const TEXTBOOK_ZOOM_MIN = 50;
+const TEXTBOOK_ZOOM_MAX = 200;
+const TEXTBOOK_ZOOM_STEP = 25;
+const TEXTBOOK_ZOOM_DEFAULT = 100;
+const CHAT_COLLAPSED_KEY = "ai_tutor_learning_chat_collapsed";
+
+function resolveTextbookSplitRestore(width: number): number {
+  if (
+    Number.isFinite(width) &&
+    width >= TEXTBOOK_PANEL_MIN_PCT &&
+    width < CHAT_COLLAPSE_THRESHOLD_PCT
+  ) {
+    return width;
+  }
+  return DEFAULT_TEXTBOOK_SPLIT_PCT;
+}
+
+function readStoredTextbookZoomPct(): number {
+  try {
+    const raw = localStorage.getItem(TEXTBOOK_ZOOM_STORAGE_KEY);
+    const v = raw ? parseInt(raw, 10) : NaN;
+    if (!Number.isFinite(v)) return TEXTBOOK_ZOOM_DEFAULT;
+    return Math.min(TEXTBOOK_ZOOM_MAX, Math.max(TEXTBOOK_ZOOM_MIN, v));
+  } catch {
+    return TEXTBOOK_ZOOM_DEFAULT;
+  }
+}
+
+function readStoredTextbookSplitPct(): number {
+  try {
+    const raw = localStorage.getItem(CHAT_PANEL_WIDTH_KEY);
+    const v = raw ? parseFloat(raw) : NaN;
+    if (!Number.isFinite(v)) return DEFAULT_TEXTBOOK_SPLIT_PCT;
+    return resolveTextbookSplitRestore(v);
+  } catch {
+    return DEFAULT_TEXTBOOK_SPLIT_PCT;
+  }
+}
+
+function readChatCollapsed(): boolean {
+  try {
+    return localStorage.getItem(CHAT_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Client-side cap for chat PDF attach; keep in line with backend MAX_USER_PDF_MB (default 100). */
+const MAX_PDF_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+const NOTE_SPLIT_STORAGE_KEY = "ai_tutor_textbook_note_split_pct_v2";
+const NOTE_SPLIT_DEFAULT = 40;
+const NOTE_SPLIT_MIN = 22;
+const NOTE_SPLIT_MAX = 92;
+const PRACTICE_SPLIT_STORAGE_KEY = "ai_tutor_practice_split_pct_v1";
+const PRACTICE_SPLIT_DEFAULT = 62;
+
+const INTAKE_REPLY_RE =
+  /intake|pick one section|please answer all|study plan|closest match|new topic or review|可选小节|学习前/i;
+
+function buildChatApiHistory(msgs: { sender: string; text: string }[]) {
+  return msgs.filter((m) => {
+    if (m.text === WELCOME_MSG_SENTINEL) return false;
+    if (m.sender === "ai" && INTAKE_REPLY_RE.test(m.text || "")) return false;
+    return true;
+  });
+}
+
+export default function LearningModel() {
+  const location = useLocation();
+  const { t, chatLanguageSuffix } = useLocale();
+  const [studentId] = useState<string>(() => getOrCreateStudentId());
+  const { token } = useAuth();
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Bridge Learning Mode's session state to the global sidebar History.
+  const bridge = useSessionBridge();
+  const sessionApiRef = useRef<{
+    load: (sid: string) => void;
+    newChat: () => void;
+    preview: (d: OutlineSectionPreviewDetail) => void;
+  }>({ load: () => {}, newChat: () => {}, preview: () => {} });
+  const pendingSelectRef = useRef<string | null>(null);
+  useEffect(() => { bridge.publishActive(sessionId); }, [sessionId, bridge]);
+  useEffect(() => { bridge.publishRefresh(refreshTrigger); }, [refreshTrigger, bridge]);
+  useEffect(
+    () => bridge.attach({
+      select: (sid) => sessionApiRef.current.load(sid),
+      newChat: () => sessionApiRef.current.newChat(),
+      previewSection: (d) => sessionApiRef.current.preview(d),
+    }),
+    [bridge]
+  );
+  useEffect(() => {
+    const p = bridge.takePending();
+    if (p?.kind === "new") sessionApiRef.current.newChat();
+    else if (p?.kind === "select") pendingSelectRef.current = p.sid;
+    else if (p?.kind === "preview") sessionApiRef.current.preview(p.detail);
+    // run once on mount; applies a request made from the sidebar on another page
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (token && pendingSelectRef.current) {
+      const sid = pendingSelectRef.current;
+      pendingSelectRef.current = null;
+      sessionApiRef.current.load(sid);
+    }
+  }, [token]);
+
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<any[]>([]);
+  const { curriculumTree, setCurriculumTree } = useCurriculum();
+  const [textbookId, setTextbookId] = useState(() => readSelectedTextbookId());
+
+  const [matchedSection, setMatchedSection] = useState<any>(null);
+  const [dataMatchedTopic, setDataMatchedTopic] = useState<{
+    name: string;
+    startBook: number;
+    endBook: number;
+    sectionHint?: string;
+  } | null>(null);
+  // Client-side trigger for Practice mode (eng-review #2/#3): captured synchronously
+  // from the outline click, NOT from the server-set dataMatchedTopic.
+  const [activeSectionTitle, setActiveSectionTitle] = useState<string | null>(null);
+  const [practiceViewNote, setPracticeViewNote] = useState(false);
+  const [guideViewNote, setGuideViewNote] = useState(false);
+  const [referencePageImage, setReferencePageImage] = useState<string | null>(null);
+  const [referencePageSnippets, setReferencePageSnippets] = useState<string[] | null>(null);
+  const [referenceSectionPages, setReferenceSectionPages] = useState<string[] | null>(null);
+  const [sectionPageIndex, setSectionPageIndex] = useState(0);
+  const [outlinePreviewLoading, setOutlinePreviewLoading] = useState(false);
+  const [outlinePreviewError, setOutlinePreviewError] = useState<string | null>(null);
+  const [enlargedImageSrc, setEnlargedImageSrc] = useState<string | null>(null);
+  const [textbookZoomPct, setTextbookZoomPct] = useState(readStoredTextbookZoomPct);
+  const [bookHighlight, setBookHighlight] = useState<string | null>(null);
+  const pendingBookPageRef = useRef<number | null>(null);
+  const bookHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Closes the section Note split; wired after useSectionNoteToggle mounts. */
+  const closeSectionNoteRef = useRef<() => void>(() => {});
+  const textbookImgRef = useRef<HTMLDivElement>(null);
+  const textbookPan = useDragScroll();
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  const [pdfAttachment, setPdfAttachment] = useState<{ name: string; dataUrl: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+
+  const [rightPanelWidth, setRightPanelWidth] = useState(readStoredTextbookSplitPct);
+  const [chatCollapsed, setChatCollapsed] = useState(readChatCollapsed);
+  const lastExpandedSplitRef = useRef(readStoredTextbookSplitPct());
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
+
+  const persistChatCollapsed = useCallback((collapsed: boolean) => {
+    setChatCollapsed(collapsed);
+    try {
+      if (collapsed) localStorage.setItem(CHAT_COLLAPSED_KEY, "1");
+      else localStorage.removeItem(CHAT_COLLAPSED_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const expandChatPanel = useCallback(() => {
+    const restored = resolveTextbookSplitRestore(lastExpandedSplitRef.current);
+    lastExpandedSplitRef.current = restored;
+    persistChatCollapsed(false);
+    setRightPanelWidth(restored);
+  }, [persistChatCollapsed]);
+
+  const adjustTextbookZoom = useCallback((delta: number) => {
+    setTextbookZoomPct((prev) => {
+      const next = Math.min(
+        TEXTBOOK_ZOOM_MAX,
+        Math.max(TEXTBOOK_ZOOM_MIN, prev + delta)
+      );
+      try {
+        localStorage.setItem(TEXTBOOK_ZOOM_STORAGE_KEY, String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  const resetTextbookZoom = useCallback(() => {
+    setTextbookZoomPct(TEXTBOOK_ZOOM_DEFAULT);
+    try {
+      localStorage.setItem(TEXTBOOK_ZOOM_STORAGE_KEY, String(TEXTBOOK_ZOOM_DEFAULT));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const applyTextbookSplitPct = useCallback((width: number) => {
+    const clamped = Math.min(
+      TEXTBOOK_PANEL_MAX_PCT,
+      Math.max(TEXTBOOK_PANEL_MIN_PCT, width)
+    );
+    setRightPanelWidth(clamped);
+    if (clamped < CHAT_COLLAPSE_THRESHOLD_PCT) {
+      lastExpandedSplitRef.current = clamped;
+      try {
+        localStorage.setItem(CHAT_PANEL_WIDTH_KEY, String(clamped));
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const tree = await fetchTextbookTreeForId(token, textbookId);
+      if (cancelled) return;
+      setCurriculumTree(focsOutlineToCurriculum(tree));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [textbookId, token, setCurriculumTree]);
+
+  useLayoutEffect(() => {
+    reconcileSelectedTextbookWithCatalog();
+    setTextbookId(readSelectedTextbookId());
+  }, []);
+
+  useEffect(() => {
+    reconcileSelectedTextbookWithCatalog();
+    setTextbookId(readSelectedTextbookId());
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const sync = () => {
+      reconcileSelectedTextbookWithCatalog();
+      setTextbookId(readSelectedTextbookId());
+    };
+    window.addEventListener("ai-tutor-textbook-changed", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("ai-tutor-textbook-changed", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  const handleOutlineSectionPreview = useCallback(
+    async (detail: OutlineSectionPreviewDetail) => {
+      closeSectionNoteRef.current();
+      setOutlinePreviewError(null);
+      setLeftPanelOpen(true);
+      setActiveSectionTitle(detail.sectionTitle);
+      setPracticeViewNote(false);
+      setGuideViewNote(false);
+      setDataMatchedTopic(null);
+      setMatchedSection(null);
+      setReferencePageImage(null);
+      setReferencePageSnippets(null);
+      setReferenceSectionPages(null);
+      setSectionPageIndex(0);
+      setOutlinePreviewLoading(true);
+      const previewHint = detail.sectionHint.trim() || sectionTokenFromTitle(detail.sectionTitle) || "";
+      if (textbookId.startsWith("user_") && !token) {
+        setOutlinePreviewLoading(false);
+        setOutlinePreviewError(t("learning.errSignInTextbook"));
+        return;
+      }
+      const parseJson = async (r: Response) => {
+        try {
+          return (await r.json()) as Record<string, unknown>;
+        } catch {
+          return {} as Record<string, unknown>;
+        }
+      };
+      try {
+        const qs = new URLSearchParams({
+          textbook_id: textbookId,
+          start_book: String(detail.startBook),
+          end_book: String(detail.endBook),
+          section_title: detail.sectionTitle,
+        });
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch(apiUrl(`/api/textbook_pages?${qs}`), { headers });
+        const data = (await parseJson(resp)) as {
+          detail?: string;
+          pages_b64?: string[];
+          matched_topic?: {
+            name: string;
+            start_book?: number;
+            end_book?: number;
+            start?: number;
+            end?: number;
+          };
+        };
+
+        if (resp.ok) {
+          const b64 = Array.isArray(data?.pages_b64) ? data.pages_b64 : [];
+          if (b64.length) {
+            setReferenceSectionPages(b64.map((x) => `data:image/png;base64,${x}`));
+            if (data.matched_topic) {
+              const sb = data.matched_topic.start_book ?? data.matched_topic.start ?? detail.startBook;
+              const eb = data.matched_topic.end_book ?? data.matched_topic.end ?? detail.endBook;
+              setDataMatchedTopic({
+                name: data.matched_topic.name,
+                startBook: sb,
+                endBook: eb,
+                sectionHint: previewHint || sectionTokenFromTitle(data.matched_topic.name) || undefined,
+              });
+            }
+          } else {
+            setReferenceSectionPages(null);
+            setDataMatchedTopic(null);
+            setOutlinePreviewError(t("learning.errNoPages"));
+          }
+        } else if (resp.status === 404 && detail.sectionHint.trim()) {
+          const hint = detail.sectionHint.trim();
+          const chHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (token) chHeaders.Authorization = `Bearer ${token}`;
+          const cResp = await fetch(apiUrl("/api/chat"), {
+            method: "POST",
+            headers: chHeaders,
+            body: JSON.stringify({
+              message: hint,
+              history: [],
+              student_id: studentId,
+              session_id: null,
+              textbook_id: textbookId,
+              silent: true,
+            }),
+          });
+          const cData = (await parseJson(cResp)) as {
+            detail?: string;
+            reference_section_pages_b64?: string[];
+            matched_topic?: {
+              name: string;
+              start_book?: number;
+              end_book?: number;
+              start?: number;
+              end?: number;
+            };
+          };
+          if (!cResp.ok) {
+            setOutlinePreviewError(
+              typeof cData?.detail === "string" ? cData.detail : t("learning.errLoadPages")
+            );
+            return;
+          }
+          const cb64 = cData.reference_section_pages_b64;
+          if (Array.isArray(cb64) && cb64.length) {
+            setReferenceSectionPages(cb64.map((x) => `data:image/png;base64,${x}`));
+            setSectionPageIndex(0);
+            setReferencePageSnippets(null);
+            setReferencePageImage(null);
+            if (cData.matched_topic) {
+              const sb = cData.matched_topic.start_book ?? cData.matched_topic.start ?? detail.startBook;
+              const eb = cData.matched_topic.end_book ?? cData.matched_topic.end ?? detail.endBook;
+              setDataMatchedTopic({
+                name: cData.matched_topic.name,
+                startBook: sb,
+                endBook: eb,
+                sectionHint: previewHint || sectionTokenFromTitle(cData.matched_topic.name) || undefined,
+              });
+            }
+            setOutlinePreviewError(null);
+          } else {
+            setReferenceSectionPages(null);
+            setDataMatchedTopic(null);
+            setOutlinePreviewError(t("learning.errLoadSection"));
+          }
+        } else {
+          setOutlinePreviewError(
+            typeof data?.detail === "string" ? data.detail : t("learning.errLoadPages")
+          );
+        }
+      } catch {
+        setOutlinePreviewError(t("learning.errServerPages"));
+      } finally {
+        setOutlinePreviewLoading(false);
+      }
+    },
+    [textbookId, token, studentId, t]
+  );
+
+  // Learning Progress now lives in the global Sidebar (see Sidebar.tsx). The
+  // in-workspace learning-bar column + its resize/collapse machinery were removed.
+
+  const practiceChapter = isProblemsSection(activeSectionTitle)
+    ? chapterOfProblems(activeSectionTitle)
+    : null;
+  const practiceActive = Boolean(practiceChapter && getPracticeSet(practiceChapter));
+  const guideActive = textbookId === "focs" && isInductionGuideSection(activeSectionTitle);
+
+  const hasLeftPanelContent = Boolean(
+    practiceActive ||
+      guideActive ||
+      dataMatchedTopic ||
+      matchedSection ||
+      outlinePreviewLoading ||
+      Boolean(outlinePreviewError) ||
+      (referenceSectionPages && referenceSectionPages.length > 0) ||
+      (referencePageSnippets && referencePageSnippets.length > 0) ||
+      referencePageImage
+  );
+
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const hadLeftContentRef = useRef(false);
+  const [isAwaitingReply, setIsAwaitingReply] = useState(false);
+  const chatBoxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (hasLeftPanelContent) {
+      if (!hadLeftContentRef.current) {
+        setLeftPanelOpen(true);
+      }
+      hadLeftContentRef.current = true;
+    } else {
+      hadLeftContentRef.current = false;
+    }
+  }, [hasLeftPanelContent]);
+
+  useEffect(() => {
+    if (!chatBoxRef.current) return;
+    chatBoxRef.current.scrollTo({
+      top: chatBoxRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages, isAwaitingReply]);
+
+  const showLeftColumn = hasLeftPanelContent && leftPanelOpen;
+
+  const handleResizeMove = useCallback(
+    (e: MouseEvent) => {
+      const start = resizeStartRef.current;
+      if (!start || !layoutRef.current) return;
+      const rect = layoutRef.current.getBoundingClientRect();
+      const deltaPercent = ((e.clientX - start.x) / rect.width) * 100;
+      applyTextbookSplitPct(start.width + deltaPercent);
+    },
+    [applyTextbookSplitPct]
+  );
+
+  const handleResizeEnd = useCallback(() => {
+    const start = resizeStartRef.current;
+    resizeStartRef.current = null;
+    window.removeEventListener("mousemove", handleResizeMove);
+    window.removeEventListener("mouseup", handleResizeEnd);
+    setRightPanelWidth((current) => {
+      if (current >= CHAT_COLLAPSE_THRESHOLD_PCT) {
+        const beforeDrag = start?.width ?? lastExpandedSplitRef.current;
+        lastExpandedSplitRef.current = resolveTextbookSplitRestore(beforeDrag);
+        persistChatCollapsed(true);
+      }
+      return current;
+    });
+  }, [handleResizeMove, persistChatCollapsed]);
+
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      resizeStartRef.current = { x: e.clientX, width: rightPanelWidth };
+      window.addEventListener("mousemove", handleResizeMove);
+      window.addEventListener("mouseup", handleResizeEnd);
+    },
+    [rightPanelWidth, handleResizeMove, handleResizeEnd]
+  );
+
+  /** Screen/window capture: grab one frame and attach. */
+  const handleScreenshot = useCallback(async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      alert(t("learning.errNoCapture"));
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      ctx.drawImage(video, 0, 0);
+      stream.getTracks().forEach((t) => t.stop());
+      const dataUrl = canvas.toDataURL("image/png");
+      setAttachedImages((prev) => [...prev, dataUrl]);
+    } catch (err) {
+      if ((err as Error).name !== "NotAllowedError") {
+        console.error("Screenshot failed:", err);
+        alert(t("learning.errScreenshot"));
+      }
+    }
+  }, [t]);
+
+  /** On paste, attach images from the clipboard if present. */
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          if (dataUrl) setAttachedImages((prev) => [...prev, dataUrl]);
+        };
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  }, []);
+
+  // ============================
+  // UTILS
+  // ============================
+  const addUserMessage = (text: string, images?: string[]) => {
+    setMessages((prev) => [...prev, { sender: "user", text, images }]);
+  };
+
+  const addAIMessage = (text: string) => {
+    if (typeof text !== "string") text = String(text || "");
+    setMessages((prev) => [...prev, { sender: "ai", text }]);
+  };
+
+  // ============================
+  // SEND MESSAGE → BACKEND → SHOW REPLY
+  // ============================
+  const sendChatMessage = useCallback(
+    async (userText: string, opts?: { clearInput?: boolean }) => {
+      const trimmed = userText.trim();
+      if (!trimmed || isAwaitingReply) return;
+      setOutlinePreviewError(null);
+
+      if (opts?.clearInput) setInput("");
+
+      addUserMessage(trimmed);
+      setAttachedImages([]);
+      setPdfAttachment(null);
+      setIsAwaitingReply(true);
+
+      const CHAT_TIMEOUT_MS = 120000;
+      const controller = new AbortController();
+      let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+        const sectionHint =
+          dataMatchedTopic?.sectionHint ??
+          (dataMatchedTopic?.name ? sectionTokenFromTitle(dataMatchedTopic.name) : null);
+        const resp = await fetch(apiUrl("/api/chat"), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            message: trimmed + chatLanguageSuffix(),
+            history: sectionHint ? [] : buildChatApiHistory(messages),
+            student_id: studentId,
+            session_id: sessionId,
+            textbook_id: textbookId,
+            section_hint: sectionHint,
+          }),
+          signal: controller.signal,
+        });
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = null;
+
+        const data = (await resp.json()) as {
+          matched_topic?: any;
+          reply?: string;
+          confidence?: number;
+          reference_page_image_b64?: string;
+          reference_page_snippets_b64?: string[];
+          reference_section_pages_b64?: string[];
+          session_id?: string;
+          detail?: string;
+          error?: string;
+        };
+        if (data?.session_id && !sessionId) {
+          setSessionId(data.session_id);
+          setRefreshTrigger((n) => n + 1);
+        }
+        if (!resp.ok) {
+          const detail = data?.detail || data?.error || "Backend request failed.";
+          addAIMessage(`Backend error: ${detail}`);
+          return;
+        }
+
+        const reply = data.reply || "[Empty reply]";
+        const conf = typeof data.confidence === "number" ? data.confidence : null;
+
+        if (data.matched_topic) {
+          const sb = data.matched_topic.start_book ?? data.matched_topic.startBook ?? data.matched_topic.start;
+          const eb = data.matched_topic.end_book ?? data.matched_topic.endBook ?? data.matched_topic.end;
+          setDataMatchedTopic({
+            name: data.matched_topic.name,
+            startBook: sb,
+            endBook: eb,
+            sectionHint: sectionTokenFromTitle(data.matched_topic.name) || undefined,
+          });
+        } else {
+          setDataMatchedTopic(null);
+          setMatchedSection(null);
+        }
+        if (data.reference_section_pages_b64?.length) {
+          setReferenceSectionPages(
+            data.reference_section_pages_b64.map((b64) => `data:image/png;base64,${b64}`)
+          );
+          setSectionPageIndex(0);
+          setReferencePageSnippets(null);
+          setReferencePageImage(null);
+        } else if (data.reference_page_snippets_b64?.length) {
+          setReferencePageSnippets(
+            data.reference_page_snippets_b64.map((b64) => `data:image/png;base64,${b64}`)
+          );
+          setReferencePageImage(null);
+          setReferenceSectionPages(null);
+        } else if (data.reference_page_image_b64) {
+          setReferencePageImage(`data:image/png;base64,${data.reference_page_image_b64}`);
+          setReferencePageSnippets(null);
+          setReferenceSectionPages(null);
+        }
+
+        if (conf === null) {
+          addAIMessage(reply);
+        } else {
+          addAIMessage(`${reply}\n\nConfidence: ${conf}/100`);
+        }
+      } catch (err) {
+        if (timeoutId) clearTimeout(timeoutId);
+        if ((err as Error).name === "AbortError") {
+          addAIMessage(t("learning.errTimeout"));
+        } else {
+          addAIMessage(t("learning.errBackend"));
+        }
+      } finally {
+        setIsAwaitingReply(false);
+      }
+    },
+    [
+      isAwaitingReply,
+      token,
+      messages,
+      studentId,
+      sessionId,
+      textbookId,
+      setSessionId,
+      setRefreshTrigger,
+      chatLanguageSuffix,
+      t,
+      dataMatchedTopic,
+    ]
+  );
+
+  const handleAskChat = useCallback(
+    (question: string) => {
+      if (chatCollapsed) expandChatPanel();
+      void sendChatMessage(question);
+    },
+    [chatCollapsed, expandChatPanel, sendChatMessage]
+  );
+
+  const handleJumpToBook = useCallback(
+    async (anchor: BookAnchor, highlightLabel: string) => {
+      setLeftPanelOpen(true);
+      setBookHighlight(highlightLabel);
+      if (bookHighlightTimerRef.current) clearTimeout(bookHighlightTimerRef.current);
+      bookHighlightTimerRef.current = setTimeout(() => setBookHighlight(null), 9000);
+
+      const inRange =
+        dataMatchedTopic &&
+        referenceSectionPages?.length &&
+        anchor.bookPage >= dataMatchedTopic.startBook &&
+        anchor.bookPage <= dataMatchedTopic.endBook;
+
+      if (inRange) {
+        const idx = anchor.bookPage - dataMatchedTopic!.startBook;
+        setSectionPageIndex(Math.max(0, Math.min(idx, referenceSectionPages!.length - 1)));
+        requestAnimationFrame(() => {
+          textbookImgRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+        return;
+      }
+
+      pendingBookPageRef.current = anchor.bookPage;
+      await handleOutlineSectionPreview({
+        sectionTitle: anchor.sectionTitle,
+        path: anchor.sectionHint ?? anchor.sectionTitle,
+        startBook: anchor.startBook,
+        endBook: anchor.endBook,
+        sectionHint: anchor.sectionHint ?? sectionTokenFromTitle(anchor.sectionTitle) ?? "",
+      });
+    },
+    [dataMatchedTopic, referenceSectionPages, handleOutlineSectionPreview]
+  );
+
+  useEffect(() => {
+    if (pendingBookPageRef.current == null || !referenceSectionPages?.length || !dataMatchedTopic) return;
+    const bookPage = pendingBookPageRef.current;
+    pendingBookPageRef.current = null;
+    const idx = bookPage - dataMatchedTopic.startBook;
+    setSectionPageIndex(Math.max(0, Math.min(idx, referenceSectionPages.length - 1)));
+    requestAnimationFrame(() => {
+      textbookImgRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [referenceSectionPages, dataMatchedTopic]);
+
+  const handleSend = async (textOverride?: string) => {
+    const userText = (textOverride ?? input).trim();
+    const hasImages = attachedImages.length > 0;
+    const pdfSnapshot = pdfAttachment;
+    const hasPdf = Boolean(pdfSnapshot);
+    if (!userText && !hasImages && !hasPdf) return;
+    if (isAwaitingReply) return;
+    setOutlinePreviewError(null);
+
+    const displayMessage =
+      userText ||
+      (hasPdf ? `(PDF: ${pdfSnapshot!.name})` : "") ||
+      (hasImages ? "(image)" : "") ||
+      "(attachments)";
+
+    const apiMessage =
+      userText ||
+      (hasPdf ? `Please help with the attached PDF: ${pdfSnapshot!.name}` : "") ||
+      (hasImages ? t("learning.imagePrompt") : "") ||
+      "(attachments)";
+
+    addUserMessage(displayMessage, hasImages ? [...attachedImages] : undefined);
+    setInput("");
+    setAttachedImages([]);
+    setPdfAttachment(null);
+    setIsAwaitingReply(true);
+
+    const imagesB64 = hasImages
+      ? attachedImages.map((dataUrl) =>
+          dataUrl.replace(/^data:image\/[^;]+;base64,/, "")
+        )
+      : undefined;
+
+    let data:
+      | {
+          matched_topic?: any;
+          reply?: string;
+          confidence?: number;
+          reference_page_image_b64?: string;
+          reference_page_snippets_b64?: string[];
+          reference_section_pages_b64?: string[];
+          session_id?: string;
+        }
+      | undefined;
+    const CHAT_TIMEOUT_MS = 120000;
+    const controller = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const sectionHint =
+        dataMatchedTopic?.sectionHint ??
+        (dataMatchedTopic?.name ? sectionTokenFromTitle(dataMatchedTopic.name) : null);
+      const resp = await fetch(apiUrl("/api/chat"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          message: apiMessage + chatLanguageSuffix(),
+          history: sectionHint ? [] : buildChatApiHistory(messages),
+          images_b64: imagesB64,
+          pdf_b64: hasPdf ? pdfSnapshot!.dataUrl : undefined,
+          student_id: studentId,
+          session_id: sessionId,
+          textbook_id: textbookId,
+          section_hint: sectionHint,
+        }),
+        signal: controller.signal,
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = null;
+
+      data = await resp.json();
+      // Track session ID for subsequent messages
+      if (data?.session_id && !sessionId) {
+        setSessionId(data.session_id);
+        setRefreshTrigger((n) => n + 1);
+      }
+      if (!resp.ok) {
+        const detail = (data as any)?.detail || (data as any)?.error || "Backend request failed.";
+        addAIMessage(`Backend error: ${detail}`);
+        return;
+      }
+      if (!data) { addAIMessage(t("learning.errEmptyResponse")); return; }
+
+      const reply = data.reply || "[Empty reply]";
+      const conf = typeof data.confidence === "number" ? data.confidence : null;
+
+      if (data.matched_topic) {
+        const sb = data.matched_topic.start_book ?? data.matched_topic.startBook ?? data.matched_topic.start;
+        const eb = data.matched_topic.end_book ?? data.matched_topic.endBook ?? data.matched_topic.end;
+        setDataMatchedTopic({
+          name: data.matched_topic.name,
+          startBook: sb,
+          endBook: eb,
+          sectionHint: sectionTokenFromTitle(data.matched_topic.name) || undefined,
+        });
+      } else {
+        setDataMatchedTopic(null);
+        setMatchedSection(null);
+      }
+      if (data.reference_section_pages_b64?.length) {
+        setReferenceSectionPages(
+          data.reference_section_pages_b64.map((b64) => `data:image/png;base64,${b64}`)
+        );
+        setSectionPageIndex(0);
+        setReferencePageSnippets(null);
+        setReferencePageImage(null);
+      } else if (data.reference_page_snippets_b64?.length) {
+        setReferencePageSnippets(
+          data.reference_page_snippets_b64.map((b64) => `data:image/png;base64,${b64}`)
+        );
+        setReferencePageImage(null);
+        setReferenceSectionPages(null);
+      } else if (data.reference_page_image_b64) {
+        setReferencePageImage(`data:image/png;base64,${data.reference_page_image_b64}`);
+        setReferencePageSnippets(null);
+        setReferenceSectionPages(null);
+      } else {
+        setReferencePageImage(null);
+        setReferencePageSnippets(null);
+        setReferenceSectionPages(null);
+      }
+
+      if (conf === null) {
+        addAIMessage(reply);
+      } else {
+        addAIMessage(`${reply}\n\nConfidence: ${conf}/100`);
+      }
+
+      if (curriculumTree && data?.matched_topic) {
+        matchCurriculum(userText || displayMessage);
+      }
+    } catch (err) {
+      if (timeoutId) clearTimeout(timeoutId);
+      if ((err as Error).name === "AbortError") {
+        addAIMessage(t("learning.errTimeout"));
+      } else {
+        addAIMessage(t("learning.errBackend"));
+      }
+    } finally {
+      setIsAwaitingReply(false);
+    }
+  };
+
+  // ============================
+  // MATCH CURRICULUM SECTION
+  // ============================
+  const matchCurriculum = (question: string) => {
+    if (
+      !curriculumTree ||
+      typeof curriculumTree !== "object" ||
+      !Array.isArray(curriculumTree.topics)
+    ) {
+      return;
+    }
+
+    let best: any = null;
+    let score = 0;
+
+    curriculumTree.topics.forEach((t: any) => {
+      if (!Array.isArray(t.chapters)) return;
+
+      t.chapters.forEach((c: any) => {
+        const text = (c.chapter + " " + c.key_points.join(" ")).toLowerCase();
+        const q = question.toLowerCase();
+
+        let s = 0;
+        q.split(" ").forEach((w) => {
+          if (text.includes(w)) s++;
+        });
+
+        if (s > score) {
+          score = s;
+          best = { topic: t.topic, chapter: c.chapter, key_points: c.key_points };
+        }
+      });
+    });
+
+    setMatchedSection(best);
+  };
+
+  // ============================
+  // CLEAR EVERYTHING
+  // ============================
+  const hasUserMessage = messages.some((m) => m.sender === "user");
+
+  const reset = () => {
+    setMessages([]);
+    setSessionId(null);
+    setMatchedSection(null);
+    setDataMatchedTopic(null);
+    setActiveSectionTitle(null);
+    setReferencePageImage(null);
+    setReferencePageSnippets(null);
+    setReferenceSectionPages(null);
+    setSectionPageIndex(0);
+    setEnlargedImageSrc(null);
+    setPdfAttachment(null);
+    setIsAwaitingReply(false);
+    setOutlinePreviewLoading(false);
+    setOutlinePreviewError(null);
+  };
+
+  const loadSession = async (sid: string) => {
+    if (!token) return;
+    try {
+      const resp = await fetch(apiUrl(`/api/sessions/${sid}`), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const msgs = (data.messages || []).map((m: any) => ({
+        sender: m.sender,
+        text: m.text,
+      }));
+      const cleaned = buildChatApiHistory(msgs);
+      setMessages(cleaned);
+      setSessionId(sid);
+      setMatchedSection(null);
+      setDataMatchedTopic(null);
+      setActiveSectionTitle(null);
+      setReferencePageImage(null);
+      setReferencePageSnippets(null);
+      setReferenceSectionPages(null);
+      setSectionPageIndex(0);
+      setOutlinePreviewLoading(false);
+      setOutlinePreviewError(null);
+    } catch (e) {
+      console.error("Failed to load session", e);
+    }
+  };
+
+  const handleNewChat = () => {
+    reset();
+    setRefreshTrigger((n) => n + 1);
+  };
+
+  // keep the bridge wrappers pointing at the latest closures
+  sessionApiRef.current = { load: loadSession, newChat: handleNewChat, preview: handleOutlineSectionPreview };
+
+  const activeSectionNote = useMemo(() => {
+    if (textbookId !== "focs" || !dataMatchedTopic) return null;
+    return getSectionNoteWithNewVocab(
+      FOCS_SECTION_NOTES,
+      FOCS_SECTION_TOKENS_PREORDER,
+      dataMatchedTopic.sectionHint,
+      dataMatchedTopic.name
+    );
+  }, [textbookId, dataMatchedTopic]);
+
+  const sectionNoteLabel = dataMatchedTopic
+    ? `${dataMatchedTopic.sectionHint ?? ""}:${dataMatchedTopic.name}`
+    : "";
+
+  const sectionNoteToggle = useSectionNoteToggle(sectionNoteLabel);
+
+  closeSectionNoteRef.current = () => {
+    sectionNoteToggle.setOpen(false);
+    setPracticeViewNote(false);
+    setGuideViewNote(false);
+  };
+
+  useEffect(() => {
+    const onTourStep = (e: Event) => {
+      const stepId = (e as CustomEvent<{ stepId?: string }>).detail?.stepId;
+      if (stepId === "note") {
+        void (async () => {
+          await handleOutlineSectionPreview(ONBOARDING_NOTE_SECTION);
+          window.setTimeout(() => {
+            sectionNoteToggle.setOpen(true);
+            emitOnboardingNoteReady();
+          }, 0);
+        })();
+      } else if (stepId === "problems") {
+        sectionNoteToggle.setOpen(false);
+        setPracticeViewNote(false);
+        emitOnboardingExpandPaths(ONBOARDING_INDUCTION_EXPAND_PATHS);
+        void (async () => {
+          await handleOutlineSectionPreview(ONBOARDING_PROBLEMS_SECTION);
+          emitOnboardingProblemsReady();
+        })();
+      }
+    };
+    window.addEventListener(ONBOARDING_STEP_EVENT, onTourStep);
+    return () => window.removeEventListener(ONBOARDING_STEP_EVENT, onTourStep);
+  }, [handleOutlineSectionPreview, sectionNoteToggle.setOpen]);
+
+  useEffect(() => {
+    const onFinished = () => closeSectionNoteRef.current();
+    window.addEventListener(ONBOARDING_FINISHED_EVENT, onFinished);
+    return () => window.removeEventListener(ONBOARDING_FINISHED_EVENT, onFinished);
+  }, []);
+
+  const sectionNoteActions: SectionNoteActions = useMemo(
+    () => ({
+      onAskChat: handleAskChat,
+      onJumpToBook: handleJumpToBook,
+    }),
+    [handleAskChat, handleJumpToBook]
+  );
+
+  const noteSplitActive = Boolean(
+    sectionNoteToggle.open && activeSectionNote && dataMatchedTopic && !practiceActive && !guideActive
+  );
+
+  const noteSplit = useVerticalSplitPct({
+    storageKey: NOTE_SPLIT_STORAGE_KEY,
+    defaultPct: NOTE_SPLIT_DEFAULT,
+    minPct: NOTE_SPLIT_MIN,
+    maxPct: NOTE_SPLIT_MAX,
+  });
+
+  const practiceSplit = useVerticalSplitPct({
+    storageKey: PRACTICE_SPLIT_STORAGE_KEY,
+    defaultPct: PRACTICE_SPLIT_DEFAULT,
+    minPct: NOTE_SPLIT_MIN,
+    maxPct: NOTE_SPLIT_MAX,
+  });
+
+  const openEnlargedIfNotDrag = useCallback(
+    (src: string) => {
+      if (textbookPan.shouldIgnoreClick()) return;
+      setEnlargedImageSrc(src);
+    },
+    [textbookPan]
+  );
+
+  const textbookZoomStyle = useMemo(
+    () => ({ ["--textbook-zoom-pct" as string]: `${textbookZoomPct}%` }),
+    [textbookZoomPct]
+  );
+
+  const textbookZoomNav = (
+    <div className="section-pages-zoom" role="group" aria-label={t("learning.textbookZoom")}>
+      <button
+        type="button"
+        className="section-pages-zoom-btn"
+        disabled={textbookZoomPct <= TEXTBOOK_ZOOM_MIN}
+        onClick={() => adjustTextbookZoom(-TEXTBOOK_ZOOM_STEP)}
+        aria-label={t("learning.zoomOut")}
+      >
+        −
+      </button>
+      <button
+        type="button"
+        className="section-pages-zoom-label"
+        onClick={resetTextbookZoom}
+        title={t("learning.zoomReset")}
+        aria-label={t("learning.zoomReset")}
+      >
+        {textbookZoomPct}%
+      </button>
+      <button
+        type="button"
+        className="section-pages-zoom-btn"
+        disabled={textbookZoomPct >= TEXTBOOK_ZOOM_MAX}
+        onClick={() => adjustTextbookZoom(TEXTBOOK_ZOOM_STEP)}
+        aria-label={t("learning.zoomIn")}
+      >
+        +
+      </button>
+    </div>
+  );
+
+  const textbookBody = (
+    <>
+      {outlinePreviewLoading ? (
+        <div className="outline-preview-status" role="status" aria-live="polite">
+          <span className="learning-reply-status-spinner" aria-hidden />
+          <span>{t("learning.loadingPages")}</span>
+        </div>
+      ) : null}
+      {outlinePreviewError ? (
+        <p className="outline-preview-error" role="alert">
+          {outlinePreviewError}
+        </p>
+      ) : null}
+
+      {(referenceSectionPages?.length || referencePageSnippets?.length || referencePageImage) && (
+        <div
+          ref={textbookPan.ref}
+          className={`reference-page-box reference-page-sidebar${textbookPan.grabbing ? " reference-page-sidebar--grabbing" : ""}`}
+          title={t("learning.dragToPan")}
+          {...textbookPan.handlers}
+        >
+          <div className="section-pages-nav" data-no-drag>
+            {textbookZoomNav}
+            {referenceSectionPages?.length ? (
+              <div className="section-pages-paging">
+                <button
+                  type="button"
+                  disabled={sectionPageIndex <= 0}
+                  onClick={() => setSectionPageIndex((i) => Math.max(0, i - 1))}
+                  aria-label={t("learning.prevPage")}
+                >
+                  {t("learning.prev")}
+                </button>
+                <span className="section-pages-info">
+                  {t("learning.pageOf", {
+                    current: String(sectionPageIndex + 1),
+                    total: String(referenceSectionPages.length),
+                  })}
+                </span>
+                <button
+                  type="button"
+                  disabled={sectionPageIndex >= referenceSectionPages.length - 1}
+                  onClick={() =>
+                    setSectionPageIndex((i) =>
+                      Math.min(referenceSectionPages.length - 1, i + 1)
+                    )
+                  }
+                  aria-label={t("learning.nextPage")}
+                >
+                  {t("learning.next")}
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {referenceSectionPages?.length ? (
+            <>
+              <div
+                ref={textbookImgRef}
+                className={`reference-page-img-wrap reference-page-img-wrap--zoom${bookHighlight ? " reference-page-img-wrap--highlight" : ""}`}
+                style={textbookZoomStyle}
+              >
+                {bookHighlight ? (
+                  <div className="book-page-highlight-callout" aria-live="polite">
+                    <span className="book-page-highlight-arrow" aria-hidden>
+                      ↳
+                    </span>
+                    <span className="book-page-highlight-label">{t("note.inTheBook")} {bookHighlight}</span>
+                  </div>
+                ) : null}
+                <img
+                  src={referenceSectionPages[sectionPageIndex]}
+                  alt={`Section page ${sectionPageIndex + 1}`}
+                  className="reference-page-img reference-page-img--zoomable reference-img-clickable"
+                  draggable={false}
+                  onClick={() => openEnlargedIfNotDrag(referenceSectionPages[sectionPageIndex])}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && openEnlargedIfNotDrag(referenceSectionPages[sectionPageIndex])
+                  }
+                />
+              </div>
+            </>
+          ) : referencePageSnippets?.length ? (
+            <div className="reference-page-img-wrap reference-page-img-wrap--zoom" style={textbookZoomStyle}>
+              {referencePageSnippets.map((src, i) => (
+                <img
+                  key={i}
+                  src={src}
+                  alt={`Reference snippet ${i + 1}`}
+                  className="reference-page-img reference-page-img--zoomable reference-snippet reference-img-clickable"
+                  draggable={false}
+                  onClick={() => openEnlargedIfNotDrag(src)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === "Enter" && openEnlargedIfNotDrag(src)}
+                />
+              ))}
+            </div>
+          ) : referencePageImage ? (
+            <div className="reference-page-img-wrap reference-page-img-wrap--zoom" style={textbookZoomStyle}>
+              <img
+                src={referencePageImage}
+                alt="Reference page"
+                className="reference-page-img reference-page-img--zoomable reference-img-clickable"
+                draggable={false}
+                onClick={() => openEnlargedIfNotDrag(referencePageImage)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === "Enter" && openEnlargedIfNotDrag(referencePageImage)}
+              />
+            </div>
+          ) : null}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="learning-page-wrapper">
+    <div className="learning-layout" ref={layoutRef}>
+      {/* LEFT: textbook / reference (when content exists; can collapse) */}
+      {showLeftColumn && (
+      <div
+        className={`right-panel${noteSplitActive ? " right-panel--note-split" : ""}`}
+        style={{
+          flex: chatCollapsed ? "1 1 100%" : `0 0 ${rightPanelWidth}%`,
+        }}
+      >
+        {dataMatchedTopic ? (
+          <div className="left-panel-topic-block">
+            <div className="left-panel-topic-bar">
+              <div
+                className="left-panel-topic-bar-text"
+                role="group"
+                aria-label={t("learning.currentSection")}
+              >
+                <span className="left-panel-topic-bar-title">
+                  {t("learning.textbook")} {dataMatchedTopic.name}
+                </span>
+                <span className="left-panel-topic-bar-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span className="left-panel-topic-bar-pages">
+                  {t("learning.pages", {
+                    start: String(dataMatchedTopic.startBook),
+                    end: String(dataMatchedTopic.endBook),
+                  })}
+                </span>
+              </div>
+              <div className="left-panel-topic-bar-actions">
+                {activeSectionNote ? (
+                  <SectionNoteButton
+                    open={sectionNoteToggle.open}
+                    onToggle={() => sectionNoteToggle.setOpen((v) => !v)}
+                    panelId={sectionNoteToggle.panelId}
+                  />
+                ) : null}
+                <button
+                  type="button"
+                  className="left-panel-hide-btn left-panel-hide-btn--in-bar"
+                  onClick={() => setLeftPanelOpen(false)}
+                  title={t("learning.hideSidebar")}
+                >
+                  {t("learning.hide")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="left-panel-hide-row">
+            <button
+              type="button"
+              className="left-panel-hide-btn"
+              onClick={() => setLeftPanelOpen(false)}
+              title={t("learning.hideSidebar")}
+            >
+              {t("learning.hide")}
+            </button>
+          </div>
+        )}
+
+        {practiceActive ? (
+          <div className="textbook-note-split" ref={practiceSplit.containerRef}>
+            <div
+              className="textbook-note-pane"
+              data-onboarding="chapter-practice"
+              style={{ flex: `0 0 ${practiceSplit.pct}%` }}
+            >
+              {practiceViewNote && activeSectionNote ? (
+                <div className="left-panel-section-note">
+                  <button
+                    type="button"
+                    onClick={() => setPracticeViewNote(false)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#0f766e",
+                      textDecoration: "underline",
+                      cursor: "pointer",
+                      padding: "6px 0",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    ← Back to practice
+                  </button>
+                  <SectionNotePanel
+                    note={activeSectionNote}
+                    panelId={sectionNoteToggle.panelId}
+                    actions={sectionNoteActions}
+                  />
+                </div>
+              ) : (
+                <PracticePanel
+                  chapter={practiceChapter!}
+                  textbookId={textbookId}
+                  chapterTitle={`Chapter ${practiceChapter}`}
+                  token={token}
+                  onViewNote={activeSectionNote ? () => setPracticeViewNote(true) : undefined}
+                />
+              )}
+            </div>
+            <div
+              className="textbook-note-split-handle"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("learning.resizeNote")}
+              aria-valuenow={Math.round(practiceSplit.pct)}
+              onMouseDown={practiceSplit.onResizeStart}
+              title={t("learning.resizeNoteTitle")}
+            >
+              <span className="textbook-note-split-handle-grip" aria-hidden />
+            </div>
+            <div className="textbook-pages-pane">{textbookBody}</div>
+          </div>
+        ) : guideActive ? (
+          <div className="textbook-note-split" ref={practiceSplit.containerRef}>
+            <div
+              className="textbook-note-pane"
+              data-onboarding="chapter-guide"
+              style={{ flex: `0 0 ${practiceSplit.pct}%` }}
+            >
+              {guideViewNote && activeSectionNote ? (
+                <div className="left-panel-section-note">
+                  <button
+                    type="button"
+                    onClick={() => setGuideViewNote(false)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#0f766e",
+                      textDecoration: "underline",
+                      cursor: "pointer",
+                      padding: "6px 0",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    ← Back to walkthrough
+                  </button>
+                  <SectionNotePanel
+                    note={activeSectionNote}
+                    panelId={sectionNoteToggle.panelId}
+                    actions={sectionNoteActions}
+                  />
+                </div>
+              ) : (
+                <GuidePanel
+                  script={INDUCTION_GUIDE}
+                  textbookId={textbookId}
+                  onViewNote={activeSectionNote ? () => setGuideViewNote(true) : undefined}
+                  onOpenProblems={() => void handleOutlineSectionPreview(ONBOARDING_PROBLEMS_SECTION)}
+                />
+              )}
+            </div>
+            <div
+              className="textbook-note-split-handle"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("learning.resizeNote")}
+              aria-valuenow={Math.round(practiceSplit.pct)}
+              onMouseDown={practiceSplit.onResizeStart}
+              title={t("learning.resizeNoteTitle")}
+            >
+              <span className="textbook-note-split-handle-grip" aria-hidden />
+            </div>
+            <div className="textbook-pages-pane">{textbookBody}</div>
+          </div>
+        ) : noteSplitActive && activeSectionNote ? (
+          <div className="textbook-note-split" ref={noteSplit.containerRef}>
+            <div
+              className="textbook-note-pane"
+              style={{ flex: `0 0 ${noteSplit.pct}%` }}
+            >
+              <SectionNotePanel
+                note={activeSectionNote}
+                panelId={sectionNoteToggle.panelId}
+                actions={sectionNoteActions}
+              />
+            </div>
+            <div
+              className="textbook-note-split-handle"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("learning.resizeNote")}
+              aria-valuenow={Math.round(noteSplit.pct)}
+              onMouseDown={noteSplit.onResizeStart}
+              title={t("learning.resizeNoteTitle")}
+            >
+              <span className="textbook-note-split-handle-grip" aria-hidden />
+            </div>
+            <div className="textbook-pages-pane">{textbookBody}</div>
+          </div>
+        ) : (
+          <div className="textbook-pages-pane textbook-pages-pane--full">{textbookBody}</div>
+        )}
+      </div>
+      )}
+
+      {showLeftColumn && !chatCollapsed && (
+      <div
+        className="resize-handle"
+        onMouseDown={handleResizeStart}
+        title={t("learning.resizeChat")}
+      />
+      )}
+
+      {(!showLeftColumn || !chatCollapsed) && (
+      <div
+        className="chat-panel"
+        data-onboarding="chat-panel"
+        aria-label={t("learning.panelLabel")}
+        style={
+          showLeftColumn
+            ? { flex: `1 1 ${100 - rightPanelWidth}%`, minWidth: 0 }
+            : { flex: "1 1 100%", minWidth: 0 }
+        }
+        onPaste={handlePaste}
+      >
+        {hasLeftPanelContent && !leftPanelOpen && (
+          <div className="chat-panel-header-row">
+            <button
+              type="button"
+              className="btn-show-textbook-panel"
+              onClick={() => setLeftPanelOpen(true)}
+            >
+              {t("learning.showSidebar")}
+            </button>
+          </div>
+        )}
+
+        {/* Reset button */}
+        <div className="reset-box" data-onboarding="new-session">
+          <button type="button" onClick={reset} disabled={isAwaitingReply}>
+            {t("chat.newQuestion")}
+          </button>
+        </div>
+
+        {isAwaitingReply && (
+          <div className="learning-reply-status" role="status" aria-live="polite">
+            <span className="learning-reply-status-spinner" aria-hidden />
+            <span className="learning-reply-status-text">
+              {t("learning.lookingUp")}
+            </span>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div
+          ref={chatBoxRef}
+          className={`chat-box${!hasUserMessage ? " chat-box--with-empty" : ""}`}
+        >
+          {messages.map((m, i) => (
+            <div key={i} className={m.sender === "user" ? "msg-user" : "msg-ai"}>
+              <MarkdownMessage
+                className={
+                  m.sender === "user"
+                    ? "markdown-message markdown-message--user"
+                    : "markdown-message"
+                }
+                onPickLine={
+                  m.sender === "ai"
+                    ? (text) => {
+                        setInput(text);
+                        queueMicrotask(() => chatInputRef.current?.focus());
+                      }
+                    : undefined
+                }
+              >
+                {m.text}
+              </MarkdownMessage>
+              {m.images?.length > 0 && (
+                <div className="msg-user-images">
+                  {m.images.map((src: string, j: number) => (
+                    <img key={j} src={src} alt="" className="msg-user-thumb" />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {isAwaitingReply && (
+            <div className="msg-ai msg-ai-loading-placeholder" aria-busy="true">
+              <div className="msg-ai-loading-inner">
+                <span className="learning-inline-spinner" aria-hidden />
+                <div className="msg-ai-loading-lines">
+                  <span className="msg-ai-loading-line" />
+                  <span className="msg-ai-loading-line msg-ai-loading-line--short" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Selected image previews */}
+        {(attachedImages.length > 0 || pdfAttachment) && (
+          <div className="attached-images-row">
+            {pdfAttachment && (
+              <span className="attached-img-wrap attached-pdf-wrap">
+                <span className="attached-pdf-chip" title={pdfAttachment.name}>
+                  PDF
+                </span>
+                <span className="attached-pdf-name">{pdfAttachment.name}</span>
+                <button
+                  type="button"
+                  className="attached-img-remove"
+                  onClick={() => setPdfAttachment(null)}
+                  aria-label={t("learning.removePdf")}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {attachedImages.map((src, i) => (
+              <span key={i} className="attached-img-wrap">
+                <img src={src} alt="" className="attached-img-thumb" />
+                <button
+                  type="button"
+                  className="attached-img-remove"
+                  onClick={() => setAttachedImages((prev) => prev.filter((_, j) => j !== i))}
+                  aria-label={t("learning.removeImage")}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {!hasUserMessage && (
+          <div className="chat-example-prompts" role="group" aria-label={t("learning.exampleLabel")}>
+            <p className="chat-example-label">{t("learning.exampleLabel")}</p>
+            <div className="chat-example-list">
+              {LEARNING_CHAT_EXAMPLES.map((ex, i) => (
+                <button
+                  key={ex.id}
+                  type="button"
+                  className="chat-example-chip"
+                  disabled={isAwaitingReply}
+                  onClick={() => {
+                    setInput(ex.sendText);
+                    queueMicrotask(() => chatInputRef.current?.focus());
+                  }}
+                >
+                  <span className="chat-example-num">{i + 1}.</span>
+                  <span className="chat-example-text">{ex.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Input bar */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,.pdf,application/pdf"
+          multiple
+          className="hidden-file-input"
+          aria-hidden
+          onChange={(e) => {
+            const files = e.target.files;
+            if (!files?.length) return;
+            Array.from(files).forEach((file) => {
+              const isPdf =
+                file.type === "application/pdf" ||
+                file.name.toLowerCase().endsWith(".pdf");
+              if (isPdf) {
+                if (file.size > MAX_PDF_UPLOAD_BYTES) {
+                  alert(t("learning.pdfTooLarge", { max: String(MAX_PDF_UPLOAD_BYTES / (1024 * 1024)) }));
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const dataUrl = reader.result as string;
+                  if (dataUrl) setPdfAttachment({ name: file.name, dataUrl });
+                };
+                reader.readAsDataURL(file);
+                return;
+              }
+              if (!file.type.startsWith("image/")) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                const dataUrl = reader.result as string;
+                if (dataUrl) setAttachedImages((prev) => [...prev, dataUrl]);
+              };
+              reader.readAsDataURL(file);
+            });
+            e.target.value = "";
+          }}
+        />
+        <div className="learning-input-shell" data-onboarding="chat-input">
+          <div className="input-row">
+            <button
+              type="button"
+              className="input-icon-btn"
+              onClick={() => fileInputRef.current?.click()}
+              title={t("learning.chooseFile")}
+              aria-label={t("learning.chooseFile")}
+            >
+              <svg className="input-icon-svg" viewBox="0 0 24 24" aria-hidden>
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="1.75" />
+                <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
+                <path d="M21 15l-5-5L5 21" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="input-icon-btn"
+              onClick={handleScreenshot}
+              title={t("learning.screenshotTitle")}
+              aria-label={t("learning.screenshot")}
+            >
+              <svg className="input-icon-svg" viewBox="0 0 24 24" aria-hidden>
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="1.75" />
+                <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+                <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+              </svg>
+            </button>
+            <input
+              ref={chatInputRef}
+              type="text"
+              className="chat-input-text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!isAwaitingReply) handleSend();
+                }
+              }}
+              placeholder={t("chat.placeholder")}
+              disabled={isAwaitingReply}
+            />
+            <button
+              type="button"
+              className="learning-send-btn"
+              onClick={() => void handleSend()}
+              title={t("learning.send")}
+              aria-label={t("learning.send")}
+              disabled={isAwaitingReply}
+            >
+              <svg className="learning-send-icon" viewBox="0 0 24 24" aria-hidden>
+                <line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path
+                  d="M22 2L15 22l-4-9-9-4 20-7z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {showLeftColumn && chatCollapsed && (
+        <div className="chat-panel-root chat-panel-root--collapsed">
+          <button
+            type="button"
+            className="chat-panel-reveal-btn"
+            onClick={expandChatPanel}
+            title={t("learning.showChat")}
+            aria-label={t("learning.showChatPanel")}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
+    {enlargedImageSrc && (
+      <div
+        className="reference-image-lightbox"
+        onClick={() => setEnlargedImageSrc(null)}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Enlarged image"
+      >
+        <button
+          type="button"
+          className="reference-image-lightbox-close"
+          onClick={(e) => {
+            e.stopPropagation();
+            setEnlargedImageSrc(null);
+          }}
+          aria-label="Close"
+        >
+          ×
+        </button>
+        <img
+          src={enlargedImageSrc}
+          alt="Enlarged view"
+          className="reference-image-lightbox-img"
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+    )}
+    </div>
+  );
+}
