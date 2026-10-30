@@ -254,7 +254,9 @@ export default function Sidebar() {
     };
   }, []);
 
-  const activeKey = location.pathname.startsWith("/autograder")
+  const activeKey = location.pathname.startsWith("/studio")
+    ? "/studio"
+    : location.pathname.startsWith("/autograder")
     ? "/autograder"
     : location.pathname.startsWith("/grades")
       ? "/grades"

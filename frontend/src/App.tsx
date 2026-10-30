@@ -25,7 +25,7 @@ function AppShell() {
   const isHome = location.pathname === "/";
 
   return (
-    <div className={`app-container${isHome ? " app-container--home" : ""}${location.pathname === "/learning" ? " app-container--learning" : ""}`}>
+    <div className={`app-container${isHome ? " app-container--home" : ""}${["/learning", "/studio", "/grades", "/autograder"].includes(location.pathname) ? " app-container--studio-theme" : ""}`}>
       {!isHome && <Sidebar />}
       <div className="app-main">
         {!isHome && showDeployWarning ? (

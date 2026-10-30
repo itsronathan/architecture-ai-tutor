@@ -1,5 +1,5 @@
-/* Studio palette, scoped to Learning Mode so other routes keep their styling. */
-.app-container--learning {
+/* Shared Studio palette for Learning Mode and the Workspace routes. */
+.app-container--studio-theme {
   --learn-paper: #f4f2ed;
   --learn-surface: #fffefa;
   --learn-ink: #292c29;
@@ -11,67 +11,89 @@
   --app-chat-panel-bg: var(--learn-paper);
   color: var(--learn-ink);
 }
-.app-container--learning :is(.content, .learning-page-wrapper, .learning-layout, .chat-panel) {
+.app-container--studio-theme :is(.content, .learning-page-wrapper, .learning-layout, .chat-panel) {
   background: var(--learn-paper);
   color: var(--learn-ink);
 }
-.app-container--learning :is(.learning-course-switch, .right-panel, .left-panel-topic-bar, .section-pages-nav, .learning-input-shell, .learning-reply-status) {
+.app-container--studio-theme :is(.learning-course-switch, .right-panel, .left-panel-topic-bar, .section-pages-nav, .learning-input-shell, .learning-reply-status) {
   background: var(--learn-surface);
   color: var(--learn-ink);
   border-color: var(--learn-line);
   box-shadow: none;
 }
-.app-container--learning .learning-course-switch { padding: 14px 20px; }
-.app-container--learning .learning-course-switch select {
+.app-container--studio-theme .learning-course-switch { padding: 14px 20px; }
+.app-container--studio-theme .learning-course-switch select {
   background: var(--learn-surface);
   color: var(--learn-ink);
   border-color: var(--learn-line);
 }
-.app-container--learning :is(.reset-box button, .btn-show-textbook-panel, .left-panel-note-btn, .left-panel-hide-btn, .section-pages-nav button, .chat-panel-reveal-btn, .learning-bar-reveal-btn) {
+.app-container--studio-theme :is(.reset-box button, .btn-show-textbook-panel, .left-panel-note-btn, .left-panel-hide-btn, .section-pages-nav button, .chat-panel-reveal-btn, .learning-bar-reveal-btn) {
   background: var(--learn-surface);
   color: var(--learn-green);
   border-color: var(--learn-line);
   border-radius: 6px;
   box-shadow: none;
 }
-.app-container--learning :is(.reset-box button, .btn-show-textbook-panel, .left-panel-note-btn, .left-panel-hide-btn, .section-pages-nav button, .chat-panel-reveal-btn, .learning-bar-reveal-btn):hover:not(:disabled),
-.app-container--learning .left-panel-note-btn--open {
+.app-container--studio-theme :is(.reset-box button, .btn-show-textbook-panel, .left-panel-note-btn, .left-panel-hide-btn, .section-pages-nav button, .chat-panel-reveal-btn, .learning-bar-reveal-btn):hover:not(:disabled),
+.app-container--studio-theme .left-panel-note-btn--open {
   background: var(--learn-sage);
   color: var(--learn-green);
   border-color: #789285;
 }
-.app-container--learning .chat-example-chip {
+.app-container--studio-theme .chat-example-chip {
   background: #f1f3ee;
   border-color: #d4dad3;
   color: var(--learn-green);
   border-radius: 8px;
 }
-.app-container--learning .chat-example-chip:hover:not(:disabled) { background: var(--learn-sage); border-color: #789285; }
-.app-container--learning :is(.chat-example-num, .lm-welcome-who, .lm-welcome-hand),
-.app-container--learning .lm-welcome-steps > li::before { color: var(--learn-accent); }
-.app-container--learning .lm-welcome-av { background: var(--learn-sage); color: var(--learn-green); }
-.app-container--learning :is(.lm-welcome-lead, .lm-welcome-steps > li, .lm-welcome-steps strong, .msg-ai, .left-panel-topic-bar-title, .chat-input-text) { color: var(--learn-ink); }
-.app-container--learning :is(.lm-welcome-close, .chat-example-label, .left-panel-topic-bar-pages, .section-pages-info, .section-pages-zoom-label, .input-icon-btn) { color: var(--learn-muted); }
-.app-container--learning .chat-input-text::placeholder { color: var(--learn-muted); }
-.app-container--learning .markdown-message--user { background: var(--learn-green); color: #fffefa; }
-.app-container--learning .markdown-message:not(.markdown-message--user) :is(h1, h2, h3, h4, h5, h6) { color: var(--learn-ink); }
-.app-container--learning .markdown-message a { color: var(--learn-accent); }
-.app-container--learning .markdown-message--user a { color: #fffefa; }
-.app-container--learning .learning-send-btn { background: var(--learn-accent); color: white; }
-.app-container--learning .learning-send-btn:hover:not(:disabled) { background: #77311e; }
-.app-container--learning .input-icon-btn:hover { background: var(--learn-sage); color: var(--learn-green); }
-.app-container--learning :is(.resize-handle, .textbook-note-split-handle, .chat-panel-root--collapsed) { background: #e8e5dc; border-color: var(--learn-line); }
-.app-container--learning :is(.resize-handle, .textbook-note-split-handle):hover { background: #789285; }
-.app-container--learning :is(.learning-reply-status-spinner, .learning-inline-spinner) { border-color: #d4dad3; border-top-color: var(--learn-green); }
-.app-container--learning :is(button, select, summary, a):focus-visible { outline: 3px solid var(--learn-accent); outline-offset: 3px; }
-.app-container--learning .learning-input-shell:focus-within { border-color: var(--learn-accent); box-shadow: 0 0 0 2px #98412a26; }
+.app-container--studio-theme .chat-example-chip:hover:not(:disabled) { background: var(--learn-sage); border-color: #789285; }
+.app-container--studio-theme :is(.chat-example-num, .lm-welcome-who, .lm-welcome-hand),
+.app-container--studio-theme .lm-welcome-steps > li::before { color: var(--learn-accent); }
+.app-container--studio-theme .lm-welcome-av { background: var(--learn-sage); color: var(--learn-green); }
+.app-container--studio-theme :is(.lm-welcome-lead, .lm-welcome-steps > li, .lm-welcome-steps strong, .msg-ai, .left-panel-topic-bar-title, .chat-input-text) { color: var(--learn-ink); }
+.app-container--studio-theme :is(.lm-welcome-close, .chat-example-label, .left-panel-topic-bar-pages, .section-pages-info, .section-pages-zoom-label, .input-icon-btn) { color: var(--learn-muted); }
+.app-container--studio-theme .chat-input-text::placeholder { color: var(--learn-muted); }
+.app-container--studio-theme .markdown-message--user { background: var(--learn-green); color: #fffefa; }
+.app-container--studio-theme .markdown-message:not(.markdown-message--user) :is(h1, h2, h3, h4, h5, h6) { color: var(--learn-ink); }
+.app-container--studio-theme .markdown-message a { color: var(--learn-accent); }
+.app-container--studio-theme .markdown-message--user a { color: #fffefa; }
+.app-container--studio-theme .learning-send-btn { background: var(--learn-accent); color: white; }
+.app-container--studio-theme .learning-send-btn:hover:not(:disabled) { background: #77311e; }
+.app-container--studio-theme .input-icon-btn:hover { background: var(--learn-sage); color: var(--learn-green); }
+.app-container--studio-theme :is(.resize-handle, .textbook-note-split-handle, .chat-panel-root--collapsed) { background: #e8e5dc; border-color: var(--learn-line); }
+.app-container--studio-theme :is(.resize-handle, .textbook-note-split-handle):hover { background: #789285; }
+.app-container--studio-theme :is(.learning-reply-status-spinner, .learning-inline-spinner) { border-color: #d4dad3; border-top-color: var(--learn-green); }
+.app-container--studio-theme :is(button, select, summary, a):focus-visible { outline: 3px solid var(--learn-accent); outline-offset: 3px; }
+.app-container--studio-theme .learning-input-shell:focus-within { border-color: var(--learn-accent); box-shadow: 0 0 0 2px #98412a26; }
 
 /* A quiet green sidebar keeps its existing light text legible. */
-.app-container--learning .sb { --tealb: #c7d9c2; --teal: #91af89; background: #293b30; border-color: #4c6050; }
-.app-container--learning :is(.sb-group-label, .sb-empty, .sb-hist-time, .sb-hist-group-label) { color: #b9c7b7; }
-.app-container--learning :is(.sb-link.is-active, .sb-hist-item.is-active, .sb-newchat, .sb-signin, .sb-tour-btn, .sb-brand-mark, .sb-avatar--empty) { background: #3b5140; border-color: #617a62; color: #eef3e9; }
-.app-container--learning :is(.sb-link, .sb-section-head, .sb-hist-item, .sb-newchat, .sb-signin, .sb-tour-btn):hover { background: #49614c; color: #fffefa; }
-.app-container--learning .auth-prompt { background: #e4eee6; border-color: #cbd3c8; }
-.app-container--learning :is(.auth-prompt-text, .auth-prompt-lock, .auth-prompt-close) { color: var(--learn-green); }
-.app-container--learning .auth-prompt-signin { background: var(--learn-surface); border-color: #789285; color: var(--learn-green); box-shadow: none; }
-.app-container--learning .auth-prompt-signin:hover { background: #d4e3d5; }
+.app-container--studio-theme .sb { --tealb: #c7d9c2; --teal: #91af89; background: #293b30; border-color: #4c6050; }
+.app-container--studio-theme :is(.sb-group-label, .sb-empty, .sb-hist-time, .sb-hist-group-label) { color: #b9c7b7; }
+.app-container--studio-theme :is(.sb-link.is-active, .sb-hist-item.is-active, .sb-newchat, .sb-signin, .sb-tour-btn, .sb-brand-mark, .sb-avatar--empty) { background: #3b5140; border-color: #617a62; color: #eef3e9; }
+.app-container--studio-theme :is(.sb-link, .sb-section-head, .sb-hist-item, .sb-newchat, .sb-signin, .sb-tour-btn):hover { background: #49614c; color: #fffefa; }
+.app-container--studio-theme .auth-prompt { background: #e4eee6; border-color: #cbd3c8; }
+.app-container--studio-theme :is(.auth-prompt-text, .auth-prompt-lock, .auth-prompt-close) { color: var(--learn-green); }
+.app-container--studio-theme .auth-prompt-signin { background: var(--learn-surface); border-color: #789285; color: var(--learn-green); box-shadow: none; }
+.app-container--studio-theme .auth-prompt-signin:hover { background: #d4e3d5; }
+
+/* Workspace pages reuse Learning Mode's palette without changing layout. */
+.app-container--studio-theme .content:has(.gr-page) { background: var(--learn-paper); }
+.app-container--studio-theme .gr-page {
+  --paper: var(--learn-paper);
+  --paper-card: var(--learn-surface);
+  --ink: var(--learn-ink);
+  --ink-soft: var(--learn-muted);
+  --navy: var(--learn-ink);
+  --teal: var(--learn-green);
+  --teal-mid: var(--learn-green);
+  --teal-bright: #91af89;
+  --rule: var(--learn-line);
+  --rule-strong: #789285;
+}
+.app-container--studio-theme .gr-fr-mark { background: #293b30; color: var(--learn-sage); }
+.app-container--studio-theme .gr-btn-primary { background: var(--learn-accent); }
+.app-container--studio-theme .gr-btn-primary:hover { background: #77311e; }
+.app-container--studio-theme :is(.gr-ladder-row.is-target, .gr-gb-weight) { background: var(--learn-sage); }
+.app-container--studio-theme .gr-hero-mark { background: var(--learn-surface); }
+.app-container--studio-theme .gr-btn-ghost:hover { background: var(--learn-sage); }
+.app-container--studio-theme :is(input, textarea):focus-visible { outline: 3px solid var(--learn-accent); outline-offset: 3px; }
