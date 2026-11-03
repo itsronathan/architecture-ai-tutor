@@ -8,18 +8,18 @@ export default function Home() {
   return (
     <div className="home-scrap">
       <div className="home-inner">
-        {/* studio drawing marks */}
+        {/* scattered discrete-math glyphs */}
         <div className="hs-glyphs" aria-hidden>
-          <span className="hs-g g1">↗</span>
-          <span className="hs-g g2">▱</span>
-          <span className="hs-g g3">△</span>
-          <span className="hs-g g4">⌜</span>
-          <span className="hs-g g5">▭</span>
-          <span className="hs-g g6">↔</span>
-          <span className="hs-g g7">☰</span>
-          <span className="hs-g g8">○</span>
-          <span className="hs-g g9 mono">N ↑</span>
-          <span className="hs-g g10 mono">1:100</span>
+          <span className="hs-g g1">∀</span>
+          <span className="hs-g g2">∃</span>
+          <span className="hs-g g3">∧</span>
+          <span className="hs-g g4">¬</span>
+          <span className="hs-g g5">⊆</span>
+          <span className="hs-g g6">∈</span>
+          <span className="hs-g g7">≡</span>
+          <span className="hs-g g8">∅</span>
+          <span className="hs-g g9 mono">p→q</span>
+          <span className="hs-g g10 mono">(mod n)</span>
         </div>
 
         <div className="hs-wrap">
@@ -28,11 +28,11 @@ export default function Home() {
             <div className="hs-hero-copy">
               <span className="hs-eyebrow">start here</span>
               <h1 className="hs-headline">
-                Architecture<br />
-                <span className="hs-mark">AI Tutor</span>
+                Equal Education<br />
+                for <span className="hs-mark">Everyone</span>
               </h1>
               <p className="hs-lede">
-                Explore design ideas, understand your brief, and build your studio project.
+                Ask a question, view notes and textbook, practice proofs, acquire reasoning skills.
               </p>
 
               {!loading && user && (
@@ -133,26 +133,27 @@ export default function Home() {
                     Personalize your <span className="hs-hl"><span>learning.</span></span>
                   </h2>
                   <p>
-                    Start with your assignment, explore possibilities, and decide what to test through sketches and models.
+                    It doesn't just answer. It pulls the exact definition or theorem from your book, lays
+                    out a proof skeleton, then turns it into practice you can check.
                   </p>
                 </div>
                 <div className="hs-agents" aria-label="teaching pipeline">
                   <article className="hs-agent s1">
-                    <div className="hs-agent-id">STEP 01 · BRIEF</div>
+                    <div className="hs-agent-id">STEP 01 · TEXTBOOK</div>
                     <div className="hs-agent-t">Read the source</div>
-                    <p>Add your assignment and review its requirements before exploring ideas.</p>
+                    <p>Definitions, theorems, and worked examples from your exact section get pulled into one grounded packet.</p>
                   </article>
                   <span className="hs-arrow-cx" aria-hidden />
                   <article className="hs-agent s2">
                     <div className="hs-agent-id">STEP 02 · PLAN</div>
-                    <div className="hs-agent-t">Explore design options</div>
-                    <p>Use site, light, movement, and form to explore different approaches.</p>
+                    <div className="hs-agent-t">Build the proof skeleton</div>
+                    <p>Cases, base &amp; inductive steps, and the formulas you'll need get ordered like a study guide before any prose.</p>
                   </article>
                   <span className="hs-arrow-cx" aria-hidden />
                   <article className="hs-agent s3">
                     <div className="hs-agent-id">STEP 03 · CHECK</div>
-                    <div className="hs-agent-t">Sketch, then reflect</div>
-                    <p>Try a sketch or model, compare your options, and record what you learn.</p>
+                    <div className="hs-agent-t">Teach, then test</div>
+                    <p>The explanation becomes truth tables and practice problems — not a paragraph you trust blindly.</p>
                   </article>
                 </div>
               </div>
@@ -162,29 +163,29 @@ export default function Home() {
           {/* TOOLS */}
           <section className="hs-tools">
             <div className="hs-tools-head">
-              <h2>Your architecture workspace.</h2>
-              <p>learn a concept, develop a project, or manage your settings.</p>
+              <h2>Three ways to study.</h2>
+              <p>pick one — they all share your progress.</p>
             </div>
             <div className="hs-tools-grid">
               <Link to="/learning" className="hs-tool">
                 <span className="hs-tab">/learning</span>
                 <div className="hs-ic">∴</div>
                 <h3>Learning Mode</h3>
-                <p>Ask about architecture or try a short design exercise at your own pace.</p>
+                <p>Ask in plain language. Get a textbook-matched explanation, step by step, with your topic checklist on the side.</p>
                 <span className="hs-go">Start learning <span className="hs-arrow">→</span></span>
               </Link>
-              <Link to="/studio" className="hs-tool">
-                <span className="hs-tab">/studio</span>
+              <Link to="/autograder" className="hs-tool">
+                <span className="hs-tab">/autograder</span>
                 <div className="hs-ic">✓</div>
-                <h3>Studio Brainstorm</h3>
-                <p>Upload your brief, explore concepts, and prepare for your next critique.</p>
-                <span className="hs-go">Open Studio <span className="hs-arrow">→</span></span>
+                <h3>Auto Grader</h3>
+                <p>Drop a Question PDF and an Answer PDF. Get structured, criterion-by-criterion grading on proofs and problem sets.</p>
+                <span className="hs-go">Grade a paper <span className="hs-arrow">→</span></span>
               </Link>
               <Link to="/profile" className="hs-tool">
                 <span className="hs-tab">/profile</span>
                 <div className="hs-ic">☺</div>
                 <h3>My profile</h3>
-                <p>Manage your account, language, and appearance. Your Studio notes stay in this browser.</p>
+                <p>Your textbooks, appearance, and saved progress — synced across every session once you sign in.</p>
                 <span className="hs-go">Open profile <span className="hs-arrow">→</span></span>
               </Link>
             </div>
@@ -196,9 +197,9 @@ export default function Home() {
           <div className="hs-acefoot-inner">
             <div className="hs-acefoot-grid">
               <div>
-                <span className="hs-ace-eyebrow">prepare for your next critique</span>
-                <h2>Develop Your Design.</h2>
-                <p className="hs-ace-sub">Your brief, your ideas, one workspace.</p>
+                <span className="hs-ace-eyebrow">last page before the exam</span>
+                <h2>Aces Your Exams.</h2>
+                <p className="hs-ace-sub">Your notes, your textbook, one workspace.</p>
                 {user ? (
                   <Link to="/learning" className="hs-btn-create">
                     Continue learning <span>→</span>
@@ -210,13 +211,13 @@ export default function Home() {
                 )}
                 <div className="hs-ace-meta">© 2026 AI Tutor · equal education for everyone</div>
               </div>
-              <aside className="hs-ace-checklist" aria-label="studio review checklist">
+              <aside className="hs-ace-checklist" aria-label="exam prep checklist">
                 <div className="hs-ace-grade">A+</div>
-                <h3>before your critique</h3>
+                <h3>before test day</h3>
                 <ul>
-                  <li>Brief reviewed</li>
-                  <li>Concepts explored</li>
-                  <li>Drawings and questions prepared</li>
+                  <li>Truth tables drilled</li>
+                  <li>Proof techniques mapped</li>
+                  <li>Counting &amp; graphs practiced</li>
                 </ul>
               </aside>
             </div>

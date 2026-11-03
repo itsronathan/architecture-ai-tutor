@@ -1,12 +1,17 @@
 import { useState } from "react";
-import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
 import { API_BASE, apiBlockedByMixedContent } from "./apiBase";
 import Home from "./Home";
+import AutoGrader from "./AutoGrader";
 import LearningMode from "./LearningMode";
+import MyLearningBar from "./MyLearningBar";
 import UserProfile from "./UserProfile";
+import Grades from "./Grades";
 import StudioBrainstorm from "./StudioBrainstorm";
 import SignInModal from "./SignInModal";
 import Sidebar from "./components/Sidebar";
+import OnboardingTour from "./components/OnboardingTour";
+import { OnboardingProvider } from "./context/OnboardingContext";
 import { useAuth } from "./context/AuthContext";
 
 import "./App.css";
@@ -20,7 +25,7 @@ function AppShell() {
   const isHome = location.pathname === "/";
 
   return (
-    <div className={`app-container${isHome ? " app-container--home" : ""}${["/learning", "/studio", "/profile"].includes(location.pathname) ? " app-container--studio-theme" : ""}`}>
+    <div className={`app-container${isHome ? " app-container--home" : ""}${["/learning", "/studio", "/grades", "/autograder"].includes(location.pathname) ? " app-container--studio-theme" : ""}`}>
       {!isHome && <Sidebar />}
       <div className="app-main">
         {!isHome && showDeployWarning ? (
@@ -40,7 +45,7 @@ function AppShell() {
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                   <path d="M7 11V7a5 5 0 0110 0v4"/>
                 </svg>
-                <span className="auth-prompt-text">Architecture studio: explore ideas, ask questions, and develop your project</span>
+                <span className="auth-prompt-text">Sign in to save chat history and track your learning progress</span>
               </div>
               <button className="auth-prompt-signin" onClick={() => setShowSignIn(true)}>
                 Sign in
@@ -58,17 +63,17 @@ function AppShell() {
         <div className="content">
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/autograder" element={<Navigate to="/studio" replace />} />
+            <Route path="/autograder" element={<AutoGrader />} />
             <Route path="/learning" element={<LearningMode />} />
-            <Route path="/learning-bar" element={<Navigate to="/learning?view=lessons" replace />} />
+            <Route path="/learning-bar" element={<MyLearningBar />} />
             <Route path="/profile" element={<UserProfile />} />
-            <Route path="/grades" element={<Navigate to="/studio" replace />} />
+            <Route path="/grades" element={<Grades />} />
             <Route path="/studio" element={loading ? <p>Loading studio…</p> : <StudioBrainstorm key={user?.uid || "guest"} ownerId={user?.uid || "guest"} />} />
           </Routes>
         </div>
 
         <SignInModal />
-
+        <OnboardingTour />
       </div>
     </div>
   );
@@ -77,9 +82,9 @@ function AppShell() {
 function App() {
   return (
     <Router>
-
+      <OnboardingProvider>
         <AppShell />
-
+      </OnboardingProvider>
     </Router>
   );
 }

@@ -2,7 +2,7 @@
 
 A student-focused design studio workspace for turning an assignment brief into ideas, studies, and critique-ready work.
 
-Developed by **Ronald Thaivan** as an architecture-focused extension of a collaborative AI Tutor project. This repository brings the architecture work together on its own default branch while preserving the architecture development history and crediting the original project.
+Developed by **Ronald Thaivan** as an architecture-focused extension of a collaborative AI Tutor project. This repository brings the architecture work together on its own default branch while retaining the original project's history and attribution.
 
 ## What it does
 
@@ -20,7 +20,7 @@ The interface uses a warm cream, muted green, and terracotta palette. Activities
 3. In **Explore → Exercises**, choose one or more lenses and open a prompt to sketch or write a response.
 4. Add concept cards and references; use **Generate images** when AI is configured.
 5. Use **Finish** to plan deliverables, record critique notes, and export your work.
-6. Open `/learning` for architecture chat, or choose **Exercises & progress** for independent lessons.
+6. Open `/learning` for chat, or select **Architectural Design Studio** for independent lessons.
 
 ## Local setup
 
@@ -68,7 +68,7 @@ cd frontend
 npm install
 ```
 
-The development server uses your local backend by default. To override it, create `frontend/.env.local` with:
+Create `frontend/.env.local` with:
 
 ```dotenv
 VITE_API_URL=
@@ -81,7 +81,7 @@ Then run:
 npm run dev
 ```
 
-Open `http://localhost:5173/studio`. Development requests go to `http://127.0.0.1:8000` by default. Production uses the same origin; set `VITE_API_URL` when deploying the backend separately.
+Open `http://localhost:5173/studio`. The local override directs requests to your own backend instead of the inherited hosted API configuration. Configure your own API origin before deploying this repository.
 
 ## What needs AI?
 
@@ -93,14 +93,14 @@ Project notes are saved in the browser; they are not automatically synced betwee
 
 React 19 · TypeScript · Vite · Python · FastAPI · OpenAI API
 
-The active application is architecture-only. Legacy FOCS textbook, math grading, and progress modules are no longer loaded by the UI or registered as backend routes. Architecture chat, exercises, and learning progress replace that flow; authentication and profile settings remain available.
+The inherited application also includes textbook learning, authentication, grading, and progress features. They remain available; this repository's focus is the architecture studio extension.
 
 ## Development checks
 
 ```bash
 cd frontend
 npm run build
-npm run test:run -- src/ArchitectureLearningMode.test.tsx src/StudioBrainstorm.test.tsx src/studio/BriefPdfUpload.test.tsx src/studio/ProjectTutor.test.tsx
+npm run test:run -- src/StudioBrainstorm.test.tsx src/studio/BriefPdfUpload.test.tsx src/studio/ProjectTutor.test.tsx
 ```
 
 ## Credits and license

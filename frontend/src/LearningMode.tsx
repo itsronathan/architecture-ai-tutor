@@ -1,18 +1,25 @@
 import { useSearchParams } from "react-router-dom";
+import LearningModel from "./LearningModel";
 import ArchitectureLearning from "./ArchitectureLearning";
-import ArchitectureChat from "./ArchitectureChat";
 import { useAuth } from "./context/AuthContext";
 import "./LearningMode.css";
 
 export default function LearningMode() {
   const [params, setParams] = useSearchParams();
-  const lessons = params.get("view") === "lessons";
+  const architecture = params.get("course") === "architecture";
   const { user, loading } = useAuth();
-  return <div className="architecture-learning">
-    <nav className="learning-course-switch" aria-label="Architecture learning tools">
-      <button aria-pressed={!lessons} onClick={() => setParams({})}>Ask the tutor</button>
-      <button aria-pressed={lessons} onClick={() => setParams({ view: "lessons" })}>Exercises &amp; progress</button>
-    </nav>
-    {loading ? <p>Loading…</p> : lessons ? <ArchitectureLearning key={user?.uid || "guest"} ownerId={user?.uid || "guest"} /> : <ArchitectureChat key={user?.uid || "guest"} ownerId={user?.uid || "guest"} />}
-  </div>;
+  return <>
+    <div className="learning-course-switch">
+      <label htmlFor="learning-course">Learning mode</label>
+      <select id="learning-course" value={architecture ? "architecture" : "textbook"} onChange={event => {
+        const next = new URLSearchParams(params);
+        next.set("course", event.target.value);
+        setParams(next);
+      }}>
+        <option value="textbook">Textbook learning</option>
+        <option value="architecture">Architectural Design Studio</option>
+      </select>
+    </div>
+    {architecture ? loading ? <p>Loading lessons…</p> : <ArchitectureLearning ownerId={user?.uid || "guest"} /> : <LearningModel />}
+  </>;
 }

@@ -18,8 +18,8 @@ export default defineConfig(({ mode }) => {
 
   // Node-only; not shipped to the browser. DEV_API_ limits what loadEnv pulls in.
   const env = loadEnv(mode, process.cwd(), "DEV_API_");
-  /** Architecture backend; override for a deployed development API. */
-  const defaultDevProxy = "http://127.0.0.1:8000";
+  /** Same public API as frontend/.env.production; set DEV_API_PROXY_TARGET for local uvicorn only */
+  const defaultDevProxy = "https://ai-tutor-3roc.onrender.com";
   const proxyTarget = (env.DEV_API_PROXY_TARGET || defaultDevProxy).replace(
     /\/$/,
     "",
