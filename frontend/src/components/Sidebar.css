@@ -335,3 +335,17 @@
   .sb:not(.sb--collapsed) .sb-user-name,
   .sb:not(.sb--collapsed) .sb-signout { display: none; }
 }
+
+/* Architecture navigation stays readable on small screens. */
+@media (max-width: 760px) {
+  .app-container:has(.architecture-sidebar) { flex-direction: column; }
+  .architecture-sidebar { width: 100%; flex: 0 0 auto; height: auto; max-height: 210px; }
+  .architecture-sidebar .sb-top { padding: 10px 14px; }
+  .architecture-sidebar:not(.sb--collapsed) .sb-brand-name { display: inline; }
+  .architecture-sidebar .sb-shell { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px; overflow: auto; }
+  .architecture-sidebar .sb-nav { display: flex; flex-wrap: wrap; }
+  .architecture-sidebar .sb-empty, .architecture-sidebar .sb-group-label { display: none; }
+  .architecture-sidebar .sb-footer { display: flex; padding: 6px 10px; gap: 8px; }
+  .architecture-sidebar .sb-signin { width: auto; }
+  .app-container:has(.architecture-sidebar) .app-main { height: auto; min-height: 0; }
+}

@@ -6,11 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api_routes import router as api_router
-from eval_routes import router as eval_router
 from studio_routes import router as studio_router
 import studio_inspiration  # Registers inspiration and drawing endpoints on studio_router.
-import database
 
 app = FastAPI()
 
@@ -28,16 +25,6 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def startup():
-    try:
-        database.init_db()
-    except Exception as e:
-        print(f"[DB] MongoDB init failed: {e}", flush=True)
-
-
-app.include_router(api_router)
-app.include_router(eval_router)
 app.include_router(studio_router)
 
 _BACKEND_DIR = Path(__file__).resolve().parent
